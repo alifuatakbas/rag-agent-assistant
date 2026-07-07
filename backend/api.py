@@ -1,11 +1,10 @@
-import bs4
+
 import requests
+from langchain.agents import create_react_agent
 from langchain_core.documents import Document
 from langchain_core.vectorstores import InMemoryVectorStore
-from langchain_huggingface import HuggingFaceEmbeddings          # ücretsiz embedding
-from langchain_groq import ChatGroq                              # ücretsiz LLM (Groq)
+from langchain_huggingface import HuggingFaceEmbeddings          # ücretsiz embedding                            # ücretsiz LLM (Groq)
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_google_genai import ChatGoogleGenerativeAI
 import glob,os
 from langchain_openai import ChatOpenAI
 from langchain_tavily import TavilySearch
@@ -13,11 +12,14 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 from dotenv import load_dotenv
+from datetime import datetime
+from langchain_chroma import Chroma
 
+CHROMA_DIZINI = "./chroma_db"
 load_dotenv()
 
 
-
+VAULT_YOLU = "/Users/alifuatakbas/Documents/Obsidian Vault"
 # --- 1. Web sayfasını indirip metne çeviren yardımcı fonksiyon ---
 def load_md_folder(dosya_yolu: str) -> list[Document]:
     docs = []
@@ -35,12 +37,27 @@ def load_md_folder(dosya_yolu: str) -> list[Document]:
 embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-m3")
 
 def bilgi_bankasi_olustur():
-    docs = load_md_folder(r"C:\Users\Administrator\Documents\Obsidian Vault")
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
-    all_splits = text_splitter.split_documents(docs)
-    vs = InMemoryVectorStore(embedding=embeddings)
-    vs.add_documents(documents=all_splits)
-    print(f"{len(docs)} dosya yüklendi, {len(all_splits)} parça oluşturuldu.")
+    # Chroma diskte var mı diye kontrol et
+    if os.path.exists(CHROMA_DIZINI) and os.listdir(CHROMA_DIZINI):
+        # Zaten kayıtlı → diskten oku, embed etme (HIZLI)
+        print("Kayıtlı bilgi bankası diskten yükleniyor...")
+        vs = Chroma(
+            persist_directory=CHROMA_DIZINI,
+            embedding_function=embeddings,
+        )
+        print(f"Yüklendi. {vs._collection.count()} parça hazır.")
+    else:
+        # İlk kez → notları oku, embed et, diske kaydet (YAVAŞ, bir kere)
+        print("İlk kurulum: notlar embed ediliyor...")
+        docs = load_md_folder(VAULT_YOLU)
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+        all_splits = text_splitter.split_documents(docs)
+        vs = Chroma.from_documents(
+            documents=all_splits,
+            embedding=embeddings,
+            persist_directory=CHROMA_DIZINI,
+        )
+        print(f"{len(docs)} dosya, {len(all_splits)} parça kaydedildi.")
     return vs
 # --- 5. LLM'i tanımla (Groq, ücretsiz) ---
 # GROQ_API_KEY ortam değişkeninden otomatik okunur, koda yazmıyoruz
@@ -49,6 +66,32 @@ model = ChatOpenAI(
     base_url="https://api.cerebras.ai/v1",
     api_key=os.getenv("CEREBRAS_API_KEY"),
 )
+
+
+
+@tool
+def nota_yaz(baslik: str, icerik: str) -> str:
+    """Kullanıcının vault'una YENİ bir not dosyası oluşturur. Kullanıcı bir şey
+    'not al', 'kaydet', 'yaz' dediğinde bunu kullan. baslik: notun kısa başlığı,
+    icerik: notun içeriği (kullanıcının kaydetmek istediği metin)."""
+    # güvenli dosya adı üret (tarih-saat + başlık)
+    tarih = datetime.now().strftime("%Y-%m-%d_%H%M")
+    # başlıktaki tehlikeli karakterleri temizle (dosya adı bozulmasın)
+    guvenli_baslik = "".join(c for c in baslik if c.isalnum() or c in " -_").strip()
+    dosya_adi = f"{tarih}_{guvenli_baslik}.md"
+
+    # "Gelen kutusu" gibi bir alt klasöre yaz (mevcut notlara karışmasın)
+    hedef_klasor = os.path.join(VAULT_YOLU, "AI Notları")
+    os.makedirs(hedef_klasor, exist_ok=True)   # klasör yoksa oluştur
+    dosya_yolu = os.path.join(hedef_klasor, dosya_adi)
+
+    # markdown içeriği: başlık + metin + oluşturulma zamanı
+    md_icerik = f"# {baslik}\n\n{icerik}\n\n---\n*AI tarafından {tarih} tarihinde oluşturuldu*\n"
+
+    with open(dosya_yolu, "w", encoding="utf-8") as f:
+        f.write(md_icerik)
+
+    return f"Not kaydedildi: {dosya_adi}"
 @tool
 def notlarda_ara(soru: str) -> str:
     """ Kullanıcının kişisel Obsidian notlarında arama yapar. Kullanıcının kendi notları,dersleri,oyunları,kişisel bilgileri veya daha önce yazdığı şeylerle ilgili sorularda bunu kullan"""
@@ -56,7 +99,23 @@ def notlarda_ara(soru: str) -> str:
     return "\n\n".join(d.page_content for d in docs)
 
 web_arama = TavilySearch(max_results=3)
-
+sistem_talimati_websiz = (
+    "You are the user's personal notes assistant. Web search is OFF.\n\n"
+    "## Rules\n"
+    "- ALWAYS call `notlarda_ara` first to search the user's own notes.\n"
+    "- If the notes contain relevant information, answer confidently and "
+    "interpret/explain it in your own words. You MAY use your general "
+    "understanding to explain and clarify what the notes say.\n"
+    "- BUT if the answer requires information that is NOT in the notes — "
+    "especially current/real-world info like weather, news, live data, or "
+    "external facts the user did not write down — do NOT answer from your own "
+    "knowledge. Instead say (in Turkish): 'Bu bilgi notlarında yok (web "
+    "kapalı).'\n"
+    "- The test: is the answer grounded in the user's notes? If yes, explain it "
+    "freely. If it would come from outside the notes, refuse.\n"
+    "- Read formats like 'Name 80/120' sensibly (level 80 of 120).\n"
+    "- Always respond in Turkish."
+)
 # --- Agent'ı oluştur ---
 sistem_talimati = (
     "You are the user's personal knowledge assistant. You help them retrieve "
@@ -100,11 +159,20 @@ sistem_talimati = (
 )
 checkpointer = MemorySaver()
 
-agent = create_react_agent(
+# Web AÇIK agent (iki tool)
+agent_webli = create_react_agent(
     model,
-    tools=[notlarda_ara, web_arama],
+    tools=[notlarda_ara, web_arama,nota_yaz],
     prompt=sistem_talimati,
-    checkpointer=checkpointer,      # memory burada devreye giriyor
+    checkpointer=MemorySaver(),
+)
+
+# Web KAPALI agent (sadece notlar)
+agent_websiz = create_react_agent(
+    model,
+    tools=[notlarda_ara,nota_yaz],
+    prompt=sistem_talimati_websiz,
+    checkpointer=MemorySaver(),
 )
 
 
@@ -118,7 +186,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Allow all origins for simplicity, adjust as needed
+    allow_origins=["http://localhost:4700"],  # Allow all origins for simplicity, adjust as needed
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
@@ -126,11 +194,12 @@ app.add_middleware(
 
 class SoruModel(BaseModel):
     soru: str
-
+    web_acik: bool = True    # varsayılan açık
 
 @app.post("/sor")
 def sor(istek: SoruModel):
-    sonuc = agent.invoke(
+    secilen_agent = agent_webli if istek.web_acik else agent_websiz
+    sonuc = secilen_agent.invoke(
         {"messages": [{"role": "user", "content": istek.soru}]},
         config={"configurable": {"thread_id": "web-sohbet"}},
     )

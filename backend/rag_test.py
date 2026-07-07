@@ -1,17 +1,19 @@
-import bs4
+
 import requests
 from langchain_core.documents import Document
 from langchain_core.vectorstores import InMemoryVectorStore
-from langchain_huggingface import HuggingFaceEmbeddings          # ücretsiz embedding
-from langchain_groq import ChatGroq                              # ücretsiz LLM (Groq)
+from langchain_huggingface import HuggingFaceEmbeddings          # ücretsiz embedding                           # ücretsiz LLM (Groq)
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_google_genai import ChatGoogleGenerativeAI
 import glob,os
 from langchain_openai import ChatOpenAI
 from langchain_tavily import TavilySearch
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 
@@ -32,7 +34,7 @@ def load_md_folder(dosya_yolu: str) -> list[Document]:
 embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-m3")
 
 def bilgi_bankasi_olustur():
-    docs = load_md_folder(r"C:\Users\Administrator\Documents\Obsidian Vault")
+    docs = load_md_folder("/Users/alifuatakbas/Documents/Obsidian Vault")
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
     all_splits = text_splitter.split_documents(docs)
     vs = InMemoryVectorStore(embedding=embeddings)
