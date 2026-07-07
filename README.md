@@ -5,6 +5,7 @@ A personal AI assistant that lets you talk to your own Obsidian notes. Ask quest
 Unlike a generic chatbot, its knowledge comes from **your own vault** — a private, self-hosted "second brain."
 
 ---
+![Note Assistant](screenshot.png)
 
 ## Features
 
@@ -134,6 +135,8 @@ Open `http://localhost:3000` (or your configured port) in the browser.
 Kendi Obsidian notlarınla konuşabildiğin kişisel bir yapay zeka asistanı. Doğal dille soru sorarsın, cevabı yazdıklarına dayanarak verir; istersen web'e de bakar ve komutla yeni not oluşturabilir.
 
 Sıradan bir sohbet botu değil — bilgisi **senin kendi vault'undan** gelen, özel, kendi sunucunda çalışan bir "ikinci beyin."
+
+![Note Assistant](screenshot.png)
 
 ## Özellikler
 
